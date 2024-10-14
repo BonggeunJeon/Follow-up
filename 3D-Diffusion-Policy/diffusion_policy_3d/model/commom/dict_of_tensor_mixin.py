@@ -5,7 +5,7 @@ class DictOfTensorMixin(nn.Module):
     def __init__(self, params_dict=None):
         super().__init__() # super가 뭐였더라?
         if params_dict is None:
-            params_dict = nn.ParameterDict()
+            params_dict = nn.ParameterDict() # torch.nn의 모듈을 사용하기 위해서 반드시 super.__init__()을 해줘야함.
         self.params_dict = params_dict
         
     @property # property가 뭐야?
@@ -23,6 +23,10 @@ class DictOfTensorMixin(nn.Module):
             dfs_add(dest[keys[0]], keys[1:], value)
             
         def load_dict(state_dict, prefix): # prefix가 뭘까?
+            """
+            disconnect의 'dis' / restart의 're' <- prefix
+            
+            """
             out_dict = nn.ParameterDict()
             for key, value in state_dict.items():
                 value: torch.Tensor
