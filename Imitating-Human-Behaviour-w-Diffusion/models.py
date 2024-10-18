@@ -421,7 +421,7 @@ class Model_Cond_Diffusion(nn.Module):
         self.guide_w = guide_w
         
         
-    def loss_on_batch(self, x_batch, y_batch): # loss on batch가 무슨 역할을 할까?
+    def loss_on_batch(self, x_batch, y_batch): # loss on batch가 무슨 역할을 할까? -> 각 batch 마다 loss 값을 구함
         _ts = torch.randint(1, self.n_T +1, (y_batch.shape[0], 1)).to(self.device)
         
         # dropout context with some probability
@@ -634,4 +634,106 @@ class Model_Cond_Diffusion(nn.Module):
         else:
             return y_i
         
+class ResidualConvBlock(nn.Module): # 2개의 Convolution 레이어로 구성되어 있음 
+    def __init__(self, in_channels, out_channels, is_res=False):
+        super().__init__()
+        self.same_channels = in_channels == out_channels
+        self.is_res = is_res
+        
+        """ 
+            Residual Block은 네트워크의 레이어 갯수가 점점 많아지면서 생기는 performance 저하를 막아주는 것이 주 역할
+        """
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, 3, 1, 1),
+            nn.BatchNorm2d(out_channels),
+            nn.GELU(),
+        )
+        self.conv2 = nn.Sequential(
+            nn.Conv2d(out_channels, out_channels, 3, 1, 1),
+            nn.BatchNorm2d(out_channels),
+            nn.GELU(),
+        )
+        
+        def forward(self, x):
+            if self.is_res:
+                x1 = self.conv1(x)
+                x2 = self.conv2(x1)
+                # this adds on correct residual in case channels have increased
+                if self.same_channels:
+                    x = x + x2
+                else:
+                    x = x1 + x2
+                return x / 1.414
+            else:
+                x = self.conv1(x)
+                x = self.conv2(x)
+                return x
+        
+class Model_cnn_mlp(nn.Module):
+    def __init__(self, x_shape, n_hidden, y_dim, embed_dim, net_type, output_dim=None):
+        super(Model_cnn_mlp, self).__init__()
+        
+        self.x_shape = x_shape
+        self.n_hidden = n_hidden
+        self.y_dim = y_dim
+        self.embed_dim = embed_dim
+        self.n_feat = 64
+        self.net_type = net_type
+        
+        if output_dim is None:
+            self.output_dim = y_dim # by default, just output size of action space
+        else:
+            self.output_dim = output_dim # sometimes overwrite, eg for discretised, mean/variance, mixture density models
+            
+        # set up CNN for image
+        self.conv_down1 = nn.Sequential(
+            ResidualConvBlock(self.x_shape[-1], self.n_feat, is_res=True),
+            nn.MaxPool2d(2),
+        )
+        self.conv_down3 = nn.Sequential(
+            ResidualConvBlock(self.n_feat, self.n_feat * 2, is_res=True),
+            nn.MaxPool2d(2),
+        )
+        self.imageembed = nn.Sequential(nn.AvgPool2d(8))
+        
+        cnn_out_dim = self.n_feat * 2
+        # how many features after flattening -- WARNING, will have to adjust this for diff size input resolution
+        # it is the flattend size after CNN layers, and average pooling
+        
+        # then once have flattened vector out of CNN, just feed into previous Model_mlp_diff_embed
+        self.nn_downstream = Model_mlp_diff_embed(
+            cnn_out_dim,
+            self.n_hidden,
+            self.y_dim,
+            self.embed_dim,
+            self.output_dim,
+            is_dropout=False,
+            is_batch=False,
+            activation="relu",
+            net_type=self.net_type,
+            use_prev=False,
+        )
+    
+    def forward(self, y, x, t, context_mask, x_embed=None):
+        # torch expects batch_size, channels, height, width
+        # but we feed in batch_size, height, width, channels
+
+        if x_embed is None:
+            x_embed = self.embed_context(x)
+        else:
+            pass
+        
+        return self.nn_downstream(y, x_embed, t, context_mask)
+    
+    def embed_context(self, x):
+        x = x.permute(0, 3, 2, 1)
+        x1 = self.conv_down1(x)
+        x3 = self.conv_down3(x1) # [batch_size, 128, 35, 18]
+        # c3 is [batch_size, 128, 4, 4]
+        x_embed = self.imageembed(x3)
+        # c_embed is [batch_size, 128, 1, 1]
+        x_embed = x_embed.view(x.shape[0], -1)
+        # c_embed os now [batch_size, 128]
+        return x_embed
+    
     
