@@ -266,7 +266,7 @@ class Model_mlp_diff_embed(nn.Module):
             self.pos_embed = TimeSiren(1, self.trans_emb_dim)
             
             self.transformer_block1 = TransformerEncoderBlock(self.trans_emb_dim, self.transformer_dim, self.nheads)
-            self.transformer_block2 = TransformerEncoderBlock(self.trans_emb_dim, self.transformer_dim, self.nheads)
+            self.transformer_block2 = x(self.trans_emb_dim, self.transformer_dim, self.nheads)
             self.transformer_block3 = TransformerEncoderBlock(self.trans_emb_dim, self.transformer_dim, self.nheads)
             self.transformer_block4 = TransformerEncoderBlock(self.trans_emb_dim, self.transformer_dim, self.nheads)
             
