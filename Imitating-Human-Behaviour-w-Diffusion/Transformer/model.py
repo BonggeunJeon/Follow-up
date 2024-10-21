@@ -99,4 +99,13 @@ class MultiHeadAttention(nn.Module):
         # Scale dot-products
         attention_weights = (1. / math.sqrt(self.d_keys)) * attention_weights
         
-        # Before computing
+        # Before computing softmax weights, prevent queires from attending to certain keys
+        
+        # Mask 1 : keys that are pads
+        not_pad_in_keys = torch.LongTensor(range(key_value_sequence_pad_lenght)).unsqueeze(0).unsqueeze(0).expand_as(
+            attention_weights).to(device) 
+        
+        not_pad_in_keys = not_pad_in_keys < key_value_sequence_lenghts.repeat_interleave(self.n_heads).unsqueeze(1).unsqueeze(2).expand_as(
+            attention_weights)
+        
+        

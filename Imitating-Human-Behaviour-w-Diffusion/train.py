@@ -144,6 +144,62 @@ def train_claw(experiment, n_epoch, lrate, device, n_hidden, batch_size, n_T, ne
             optim.step()
         results_ep.append(loss_ep / n_batch)
         
+    model.eval()
+    idxs = [14, 2, 0, 9, 5, 35, 16]
+    extra_diffusion_steps = EXTRA_DIFFUSION_STEPS if exp_name == "diffusion" else [0]
+    use_kdes = [False, True] if exp_name == "diffusion" else [False]
+    guide_weight_list = GUIDE_WEIGHTS if exp_name == "cfg" else [None]
+    idxs_data = [[] for _ in range(len(idxs))]
+    for extra_diffusion_step, guide_weight, use_kde in product(extra_diffusion_steps, guide_weight_list, use_kdes):
+        if extra_diffusion_step != 0 and use_kde:
+            continue
+        for i, idx in enumerate(idxs):
+            x_eval = (
+                torch.Tensor(torch_data_train.image_all[idx]).type(torch.FloatTensor).to(device)
+            )
+            x_eval_large = torch_data_train.image_all_large[idx]
+            obj_mask_eval = torch_data_train.label_all[idx]
+            if i == 0:
+                obj_mask_eval_marginal = np.zeros_like(obj_mask_eval)
+            obj_mask_eval_marginal += obj_mask_eval
+            for j in range(6 if not use_kde else 300):
+                x_eval_ = x_eval.repeat(50, 1, 1, 1)
+                with torch.set_grad_enabled(requires_grad_for_eval):
+                    if exp_name == "cfg":
+                        model.guide_w = guide_weight
+                    if model_type != "diffusion":
+                        y_pred_ = model.sample(x_eval_).detach().cpu().numpy()
+                    else:
+                        if extra_diffusion_step == 0:
+                            y_pred_ = (
+                                model.sample(x_eval_, extract_embedding=True).detach().cpu().numpy()
+                            )
+                        
+                        if use_kde:
+                            # kde
+                            torch_obs_many = x_eval_
+                            action_pred_many = model.sample(torch_obs_many).cpu().numpy()
+                            # fit kde to the sampled actions
+                            kde = KernelDensity(kernel='gaussian', bandwidth=0.1).fit(action_pred_many)
+                            # choose the max likelihood one
+                            log_density = kde.score_samples(action_pred_many)
+                            idx = np.argmax(log_density)
+                            y_pred_ = action_pred_many[idx][None, :]
+                        else:
+                            y_pred_ = model.sample_extra(x_eval_, extra_steps=extra_diffusion_step).detach().cpu().numpy()
+                if j == 0:
+                    y_pred_ = y_pred_
+                else:
+                    y_pred = np.concatenate([y_pred, y_pred_])
+            x_eval = x_eval.detach().cpu().numpy()
+            
+            idxs_data[i] = {
+                "idx" : idx,
+                "x_eval_large" : x_eval_large,
+                "obj_mask_eval" : obj_mask_eval,
+                "y_pred" : y_pred,
+            }
+    
         
 
 if __name__ == "__main__":
