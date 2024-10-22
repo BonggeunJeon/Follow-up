@@ -157,7 +157,7 @@ class TransformerEncoderBlock(nn.Module):
         
     def split_qkv(self, qkv):
         assert qkv.shape[-1] == self.transformer_dim * 3 # assert 는 if statement랑 비슷
-        # [:, :, :] 이게 무슨 의미일까?
+        # [:, :, :] 이게 무슨 의미일까? => slicing 할 때, 사용[시작:끝:차원]
         q = qkv[:, :, :self.transformer_dim]
         k = qkv[:, :, self.transformer_dim: 2 * self.transformer_dim]
         v = qkv[:, :, 2 * self.transformer_dim:]
@@ -266,7 +266,7 @@ class Model_mlp_diff_embed(nn.Module):
             self.pos_embed = TimeSiren(1, self.trans_emb_dim)
             
             self.transformer_block1 = TransformerEncoderBlock(self.trans_emb_dim, self.transformer_dim, self.nheads)
-            self.transformer_block2 = x(self.trans_emb_dim, self.transformer_dim, self.nheads)
+            self.transformer_block2 = TransformerEncoderBlock(self.trans_emb_dim, self.transformer_dim, self.nheads)
             self.transformer_block3 = TransformerEncoderBlock(self.trans_emb_dim, self.transformer_dim, self.nheads)
             self.transformer_block4 = TransformerEncoderBlock(self.trans_emb_dim, self.transformer_dim, self.nheads)
             
