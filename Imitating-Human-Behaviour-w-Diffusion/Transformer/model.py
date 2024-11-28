@@ -108,4 +108,104 @@ class MultiHeadAttention(nn.Module):
         not_pad_in_keys = not_pad_in_keys < key_value_sequence_lenghts.repeat_interleave(self.n_heads).unsqueeze(1).unsqueeze(2).expand_as(
             attention_weights)
         
+        # Mask away by setting such weights to a large negative number, so that they evaluate to 0 under the softmax
+        attention_weights = attention_weights.masked_fill(~not_pad_in_keys, -float('inf'))
+        
+        # Mask 2 : if this is self-attention in the decoder, keys chronologically ahead of queries
+        if self.in_decoder and self_attention:
+            # Therefore, a position [n, i, j] is valid only if j <= i
+            not_future_mask = torch.ones.like(attention_weights).tril().bool().to(device)
+            
+            attention_weights = attention_weights.masked_fill(~not_future_mask, -float('inf'))
+            
+        # Compute softmax along the key dimension / Softmax의 특성이 뭐야?
+        """ 
+            Softmax function normalizes output values from 0 to 1. And total value have to be 1.
+        """
+        attention_weights = self.softmax(attention_weights)
+        
+        # Apply droput 
+        attention_weights = self.apply_dropout(attention_weights)
+        
+        # Calculate sequences as the weighted sums of values based on these softmax weights
+        sequences = torch.bmm(attention_weights, values) 
+        
+        # Unmerge batch and n_heads dimensions and restore original order of axes / contiguous 성질이 뭐야?
+        sequences - sequences.contiguous().view(batch_size, self.n_heads, query_sequences_pad_length, self.d_values).permute(0, 2, 1, 3)
+        
+        # Concatenate the n_heads subspace 
+        sequences = sequences.contiguous().view(batch_size, query_sequences_pad_length, -1)
+        
+        # Transform the concatenated subspace-sequences into a single output of size d_model
+        sequences = self.cast_output(sequences)
+        
+        # Apply dropout and residual connection
+        sequences = self.apply_dropout(sequences) + input_to_add 
+        
+        return sequences
+    
+class PositionWiseFCNetwork(nn.Module):
+    """ 
+        The Position-Wise Feed Forward Network sublayer.
+        
+        Position 단위로 Feed Forward Network랑 연결시켜준다는 것인가?
+        
+        I think, it means that position can be connected feed forward network
+    """
+    def __init__(self, d_model, d_inner, dropout):
+        """ 
+        :param d_moel : size of vector throughout the transformal model, i.e. input and output sizes for this sublayer
+        :param d_inner : an intermediate size
+        :param drouput : dropout probability 
+        """
+        super(PositionWiseFCNetwork, self).__init__()
+        
+        self.d_model = d_model
+        self.d_inner = d_inner
+        
+        # Layer-norm layer - Is it the layer for normalization? 
+        self.layer_norm = nn.LayerNorm(d_model)
+        
+        # A linear layer to project from the input size to an intermediate size
+        self.fc1 = nn.Linear(d_model, d_inner)
+        
+        # ReLU
+        """
+            Relu = max(0 ,x)
+            
+            1. The sigmoid function contains the exponentional function that can make calculation slower than ReLU.
+            2. In Sigmoid function, if we have extream low or high values, the output will be converged into 0 or 1 which makes training too slow. 
+            3. But ReLU function is simple with respect to calculation and can make training fast.
+        """
+        self.relu = nn.ReLU()
+        
+        # A linear layer to project from the intermediate size to the output size (same as the input size)
+        self.fc2 = nn.Linear(d_inner, d_model)
+        
+        # Dropout layer
+        self.apply_dropout = nn.Dropout(dropout)
+        
+    def forward(self, sequences):
+        """ 
+            Forward prop.
+            
+            :param sequences : input sequences, a tensor of size (N, pad_length, d_model)
+            :return : transformed output sequences, a tensor of size (N, pad_length, d_model)
+        """
+        # Store input for adding layer
+        input_to_add = sequences.clone()
+        
+        # Apply layer-norm
+        sequences  = self.layer_norm(sequences) 
+        
+        # Transform position-wise
+        sequences = self.apply_dropout(self.relu(self.fc1(sequences)))
+        sequences = self.fc2(sequences)
+        
+        # Apply dropout and residual connection
+        sequences = self.apply_dropout(sequences) + input_to_add
+        
+        return sequences
+    
+        
         

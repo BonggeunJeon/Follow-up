@@ -44,4 +44,62 @@ class Renderer():
                 img = self.render(tex, indTex, indIm, weights)
                 batch.append(img)
         elif texBatch.dim() == 2:
-              
+             tex = texBatch
+             for indTex, indIm, weights in corrBatch:
+                 img = self.render(tex, indTex, indIm, weights)
+                 batch.append(img)
+                 
+        return torch.stack(batch)
+    
+    def luminosity(self, depth, a=.000035, b=.0004, c=.4):
+        depth = torch.clamp(depth, max=100)
+        attenuation = a * (depth ** 2) + b * depth + c
+        return 1 / attenuation
+    
+    def warp(self, projection_matrix, points3D, img):
+        # image shape
+        batch_size = img.shape[0]
+        num_channels = img.shape[1]
+        num_pixels = self.imH * self.imW
+        # flatten image to shape (batch_size, num_channels, -1)
+        img = img.view(batch_size, num_channels, num_pixels)
+        # project 3D coordinates to 2D pixel coordinates
+        indTgt = torch.squeeze(torch.matmul(projection_matrix, points3D), dim=-1)
+        indTgt, z = torch.split(indTgt, [2,1], dim=-1)
+        indTgt = torch.round(indTgt/z).type(torch.cuda.LongTensor)
+        # overwrite pixels out of scope
+        pX, pY = torch.split(indTgt, 1, dim=-1)
+        out_of_scope = (pX >= self.imW) | (pX < 0) | (pY >= self.imH) | (pY < 0)
+        indTgt = torch.where(out_of_scope, torch.cuda.LongTensor([self.imW, self.imH-1]), indTgt)
+        # convert to 1D coordinates (scatter and gather can only deal with 10 indices)
+        pX, pY = torch.split(indTgt, 1, dim=-1)
+        indTgt = torch.squeeze(pX + pY * self.imW, dim=-1)
+        # concatenate rgb with z value
+        z = z.view(batch_size, self.imW, self.imH).transpose(2, 1).reshape(batch_size, 1, -1)
+        img = torch.concat((img, z) dim=1)
+        num_channels = img.shape[1]
+        # map RGB values into target image 
+        indTgt = torch.unsqueeze(indTgt, dim=1).repeat(1, num_channels, 1)
+        indSrc = self.indSrc.repeat(batch_size, num_channels, 1)
+        # gather RGBD values from source image
+        gathered = torch.gather(img, -1, indSrc)
+        # scatter into target image
+        # if multiple src values are mapped to the same target lociation, the mean is used
+        empty_img = torch.zeros((batch_size, num_channels, num_pixels + 1)).cuda()
+        scattered = empty_img.scatter_add(-1, indTgt, gathered)
+        count = empty_img.scatter_add(-1, indTgt, torch.ones_like(gathered))
+        count = torch.where(count==0, torch.cuda.FloatTensor([1]), count)
+        scattered = scattered / count
+        # remove pixels out of range and reshape
+        scattered = scattered[:, :, :-1]
+        warped = scattered.view(batch_size, num_channels, self.imH, self.imW)
+        warped, z = torch.split(warped, [3, 1], dim=1)
+        return warped, z
+    
+    def get_z(self, projection_matrix, point3D):
+        ind = torch.squeeze(torch.matmul(projection_matrix, point3D), dim=-1)
+        z = ind[:, :, -1]
+        z = z.view(point3D.shape[0], 1, self.imW, self.imH).transpose(3, 2)
+        return z
+    
+    

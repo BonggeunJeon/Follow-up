@@ -10,6 +10,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 from torchvision import transforms
+import torch.functional as F
 
 from sklearn.cluster import KMeans
 from sklearn.neighbors import KernelDensity
@@ -199,6 +200,9 @@ def train_claw(experiment, n_epoch, lrate, device, n_hidden, batch_size, n_T, ne
                 "obj_mask_eval" : obj_mask_eval,
                 "y_pred" : y_pred,
             }
+    alphas_bar = torch.cumprod()
+    
+   
     
         
 

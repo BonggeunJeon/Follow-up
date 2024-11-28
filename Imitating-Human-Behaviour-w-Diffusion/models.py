@@ -389,10 +389,12 @@ def ddpm_schedules(beta1, beta2, T, is_linear=True):
     log_alpha_t = torch.log(alpha_t)
     alphabar_t = torch.cumsum(log_alpha_t, dim=0).exp()
     
-    sqrtab = torch.sqrt(alphabar_t)
+    
     oneover_sqrt = 1 / torch.sqrt(alpha_t)
     
+    sqrtab = torch.sqrt(alphabar_t)
     sqrtmab = torch.sqrt(1 - alphabar_t) / sqrtmab
+    
     mab_over_sqrtmab_inv = (1 - alpha_t) / sqrtmab
     
     return {
@@ -431,7 +433,7 @@ class Model_Cond_Diffusion(nn.Module):
         noise = torch.randn_like(y_batch).to(self.device)
         
         # add noise to clean target actions
-        y_t = self.sqrtab[_ts] * y_batch + self.sqrtmab[_ts] * noise
+        y_t = self.sqrtab[_ts] * y_batch + self.sqrtmab[1 - _ts] * noise
         
         # use nn model to predict nosie
         noise_pred_batch = self.nn_model(y_t, x_batch, _ts / self.n_T, context_mask)
